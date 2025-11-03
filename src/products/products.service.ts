@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -46,5 +47,30 @@ export class ProductsService {
     });
 
     return this.repo.save(entity);
+  }
+
+  async purchase(id: number, quantity: number): Promise<Product> {
+    if (quantity <= 0) {
+      throw new BadRequestException('Quantity must be positive');
+    }
+
+    return this.repo.manager.transaction(async (manager) => {
+      const productRepo = manager.getRepository(Product);
+
+      const product = await productRepo
+        .createQueryBuilder('product')
+        .setLock('pessimistic_write')
+        .where('product.id = :id', { id })
+        .getOne();
+
+      if (!product) throw new NotFoundException('Product not found');
+
+      if (product.stock < quantity) {
+        throw new ConflictException('Insufficient stock');
+      }
+
+      product.stock -= quantity;
+      return productRepo.save(product);
+    });
   }
 }

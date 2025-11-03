@@ -10,6 +10,7 @@ import {
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { PurchaseProductDto } from './dto/purchase-product.dto';
 
 @Controller('products')
 export class ProductsController {
@@ -33,5 +34,13 @@ export class ProductsController {
   @Put(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateProductDto) {
     return this.service.update(id, dto);
+  }
+
+  @Post(':id/purchase')
+  purchase(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: PurchaseProductDto,
+  ) {
+    return this.service.purchase(id, dto.quantity);
   }
 }
