@@ -1,98 +1,91 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# NestJS Locking Example
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+This project demonstrates optimistic and pessimistic locking strategies in a NestJS application using TypeORM and PostgreSQL. It includes a `Product` domain with CRUD operations (optimistic lock on updates) and a `purchase` flow that uses a pessimistic write lock to safely decrement stock under concurrent load.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Overview
+- Framework: `NestJS` 11, `TypeORM` 0.3.x, `PostgreSQL`
+- Locking:
+  - Optimistic locking: `VersionColumn` on `Product`, enforced on `PUT /products/:id`
+  - Pessimistic locking: `setLock('pessimistic_write')` within a transaction on `POST /products/:id/purchase`
 
-## Description
+## Data Model
+`Product` entity fields:
+- `id` (number)
+- `name` (string)
+- `price` (numeric)
+- `stock` (number)
+- `version` (number, optimistic lock)
+- `createdAt`, `updatedAt` (timestamps)
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Requirements
+- Node.js (>= 18)
+- Yarn
+- Docker (for local PostgreSQL)
 
-## Project setup
+## Setup
+1. Start database via Docker Compose:
+   - `docker-compose up -d`
+2. Environment variables:
+   - Copy `.env.example` to `.env` if needed; defaults match `docker-compose.yml`.
+3. Install dependencies:
+   - `yarn install`
+4. Run the app:
+   - Development: `yarn start:dev`
 
-```bash
-$ yarn install
-```
+## API Endpoints
+- `POST /products` → Create product
+- `GET /products` → List products
+- `GET /products/:id` → Get product by id
+- `PUT /products/:id` → Full update with optimistic lock
+  - Body requires: `name`, `price`, `stock`, `version`
+  - If body `version` ≠ current `version`: returns `409 Conflict`
+- `POST /products/:id/purchase` → Purchase with pessimistic write lock
+  - Body: `{ "quantity": number }`
+  - Validates positive quantity and sufficient stock; returns `409 Conflict` if insufficient
 
-## Compile and run the project
+## Locking Concepts
+### Optimistic Locking
+- Use case: Resolve conflicts without locking resources during reads/writes.
+- Implementation: `VersionColumn` on `Product`; each successful update increments `version`.
+- API behavior:
+  - Client must send current `version` in `PUT` body.
+  - If stale `version` provided → `409 Conflict`.
 
-```bash
-# development
-$ yarn run start
+### Pessimistic Locking
+- Use case: Prevent race conditions during stock updates under high concurrency.
+- Implementation: Transaction + `createQueryBuilder().setLock('pessimistic_write')` to lock the row until transaction completes.
+- API behavior:
+  - `POST /products/:id/purchase` acquires a write lock, checks stock, decrements, and saves.
 
-# watch mode
-$ yarn run start:dev
+## Testing Guide
+### Quick Manual Tests
+1. Create product:
+   - `curl -s -X POST http://localhost:3000/products -H 'Content-Type: application/json' -d '{"name":"Demo","price":10,"stock":5}'`
+2. Get product and note `version`:
+   - `curl -s http://localhost:3000/products/1`
+3. Optimistic update success:
+   - `curl -i -s -X PUT http://localhost:3000/products/1 -H 'Content-Type: application/json' -d '{"name":"Demo+","price":12,"stock":5,"version":<CURRENT_VERSION>}'`
+4. Optimistic update conflict:
+   - `curl -i -s -X PUT http://localhost:3000/products/1 -H 'Content-Type: application/json' -d '{"name":"Demo++","price":13,"stock":5,"version":<STALE_VERSION>}'`
+5. Purchase success:
+   - `curl -i -s -X POST http://localhost:3000/products/1/purchase -H 'Content-Type: application/json' -d '{"quantity":2}'`
+6. Purchase insufficient stock:
+   - `curl -i -s -X POST http://localhost:3000/products/1/purchase -H 'Content-Type: application/json' -d '{"quantity":999}'`
 
-# production mode
-$ yarn run start:prod
-```
+### Demo Script (Concurrent Purchase)
+Run a demo script to simulate concurrent purchases:
+- Ensure app is running on `http://localhost:3000`
+- `yarn demo:purchase`
 
-## Run tests
+The script will:
+- Create a demo product with initial stock
+- Fire two concurrent purchase requests (e.g., quantities 2 and 4)
+- Log success vs conflict outcomes and final stock
 
-```bash
-# unit tests
-$ yarn run test
-
-# e2e tests
-$ yarn run test:e2e
-
-# test coverage
-$ yarn run test:cov
-```
-
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ yarn install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+## Development
+- Build: `yarn build`
+- Lint: `yarn lint`
+- Format: `yarn format`
 
 ## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+MIT
